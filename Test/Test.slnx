@@ -1,0 +1,17 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Test_alignas/Test_alignas.vcxproj" Id="ca05ccca-0425-4540-86bf-cec2c1df30c6" />
+  <Project Path="Test_alignas2/Test_alignas2.vcxproj" Id="874322ad-536a-47ef-964f-f53d6c086496" />
+  <Project Path="Test_alignas_multiThread/Test_alignas_multiThread.vcxproj" Id="4f8a6c06-ec5f-43ff-a735-33b26a259136" />
+  <Project Path="Test_bitFeilds_2/Test_bitFeilds_2.vcxproj" Id="e3ed8329-22e9-4560-a108-2ab52cb555fe" />
+  <Project Path="Test_bitFields/Test_bitFeilds/Test_bitFeilds.vcxproj" Id="ff2cdc58-39b8-4e30-abd4-1163c26b2301" />
+  <Project Path="Test_cache/Test_cache.vcxproj" Id="ca8387cc-ebbf-4c34-8200-b2035a02e29b" />
+  <Project Path="Test_if/Test_if.vcxproj" Id="7d2143be-6730-4f42-ab37-fb4abf9c6c41" />
+  <Project Path="Test_OSMemory/Test_OSMemory.vcxproj" Id="9d5a25bb-ff4d-45b9-9620-250e95106abb" />
+  <Project Path="test_VirtualAlloc/test_VirtualAlloc.vcxproj" Id="a35d42f7-6821-4e6b-b3d3-f2f2073c928b" />
+  <Project Path="Test_VirtualAlloc2/Test_VirtualAlloc2.vcxproj" Id="f020848f-2c70-4048-ae7c-e05cef75ee1d" />
+  <Project Path="Test_virtualTable/Test_virtualTable.vcxproj" Id="876e01ec-4319-42a2-b0df-61ab7338e6e2" />
+</Solution>
