@@ -9,6 +9,7 @@
   <Project Path="Test_bitFeilds_2/Test_bitFeilds_2.vcxproj" Id="e3ed8329-22e9-4560-a108-2ab52cb555fe" />
   <Project Path="Test_bitFields/Test_bitFeilds/Test_bitFeilds.vcxproj" Id="ff2cdc58-39b8-4e30-abd4-1163c26b2301" />
   <Project Path="Test_cache/Test_cache.vcxproj" Id="ca8387cc-ebbf-4c34-8200-b2035a02e29b" />
+  <Project Path="Test_CASbarrier2/Test_CASbarrier2.vcxproj" Id="62cf5dda-372d-4529-bf0b-cc96e14d2dca" />
   <Project Path="Test_if/Test_if.vcxproj" Id="7d2143be-6730-4f42-ab37-fb4abf9c6c41" />
   <Project Path="Test_LRvalue/Test_LRvalue.vcxproj" Id="1c4da8a6-d368-400f-918e-3e208b6650af" />
   <Project Path="Test_LRvalue2/Test_LRvalue2.vcxproj" Id="b8aeeb9b-e6c9-4cf3-bf4f-2c6f214c2f6b" />
