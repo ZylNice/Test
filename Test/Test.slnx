@@ -6,6 +6,7 @@
   <Project Path="Test_alignas/Test_alignas.vcxproj" Id="ca05ccca-0425-4540-86bf-cec2c1df30c6" />
   <Project Path="Test_alignas2/Test_alignas2.vcxproj" Id="874322ad-536a-47ef-964f-f53d6c086496" />
   <Project Path="Test_alignas_multiThread/Test_alignas_multiThread.vcxproj" Id="4f8a6c06-ec5f-43ff-a735-33b26a259136" />
+  <Project Path="Test_AoS_SoA_AoSoA/Test_AoS_SoA_AoSoA.vcxproj" Id="eb40b22a-174d-4476-b0b4-113d1c438db2" />
   <Project Path="Test_bitFeilds_2/Test_bitFeilds_2.vcxproj" Id="e3ed8329-22e9-4560-a108-2ab52cb555fe" />
   <Project Path="Test_bitFields/Test_bitFeilds/Test_bitFeilds.vcxproj" Id="ff2cdc58-39b8-4e30-abd4-1163c26b2301" />
   <Project Path="Test_cache/Test_cache.vcxproj" Id="ca8387cc-ebbf-4c34-8200-b2035a02e29b" />
