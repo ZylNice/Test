@@ -300,6 +300,167 @@ static inline void aosoa_compute_all(ParticleTile* a) {
 }
 
 // =============================================================================
+// 极端场景：大结构体 (24 个属性 / 96 B，跨 2 条 cacheline)
+// -----------------------------------------------------------------------------
+// 模拟真实游戏/仿真中的"Entity"——位置、速度、加速度、旋转四元数、颜色、UV、
+// 骨骼权重、生命值、阵营、掩码 …… 这类结构体动辄几十个字段非常常见。
+// 在 AoS 布局下，只要你只读写少量字段，就会大量浪费 cacheline 带宽：
+//   - 若只访问 1 个 float 属性 (4 B)，一次 cacheline 读入 64 B 中只用了 4/64
+//   - 而 SoA 布局下这 4 B 在单独的连续数组里，cacheline 利用率 100%
+// 这正是 Data-Oriented Design / ECS 架构大行其道的原因。
+// =============================================================================
+
+constexpr int BIG_N      = 1 * 1024 * 1024;  // 1M 个对象
+constexpr int BIG_FIELDS = 24;               // 24 个 float 属性
+// 96 B/个, 总共 96 MB, 远超 LLC, 明显暴露访存瓶颈
+static_assert(BIG_N % BLOCK == 0, "BIG_N 必须是 BLOCK 的整数倍");
+
+// --- 1) 大结构体 AoS ---------------------------------------------------------
+// 24 个 float 内联字段（与 float f[24] 等价的内存布局，这里写成具名字段更"真实"）
+struct BigAoS {
+    // 位置 / 速度 / 加速度 (3 组 × 3 = 9)
+    float px, py, pz;
+    float vx, vy, vz;
+    float ax, ay, az;
+    // 旋转四元数 + 缩放 (4 + 3 = 7)
+    float qx, qy, qz, qw;
+    float sx, sy, sz;
+    // 颜色 RGBA (4)
+    float r, g, b, a;
+    // 其它 (4) —— 质量/生命/寿命/阻力
+    float mass, hp, lifetime, drag;
+};
+static_assert(sizeof(BigAoS) == BIG_FIELDS * sizeof(float),
+              "BigAoS 应恰好 96 B，无 padding");
+
+// --- 2) 大结构体 SoA ---------------------------------------------------------
+struct BigSoA {
+    float* f[BIG_FIELDS]; // 24 条独立的连续数组
+};
+
+// --- 3) 大结构体 AoSoA (块宽 = BLOCK) ---------------------------------------
+struct BigTile {
+    float f[BIG_FIELDS][BLOCK]; // 每个 tile 内部是 24 × BLOCK 的 SoA
+};
+
+// -----------------------------------------------------------------------------
+// kernels for Big
+// -----------------------------------------------------------------------------
+// 6) big_assign_single —— 只写第 0 个属性（如仅更新位置的 x 分量）
+static inline void big_aos_assign_single(BigAoS* a) {
+    for (int i = 0; i < BIG_N; ++i) {
+        a[i].px = float(i);
+        // 每写 4 B 就要拉 64 B 的 cacheline —— 极端浪费
+    }
+}
+static inline void big_soa_assign_single(BigSoA& a) {
+    float* p = a.f[0];
+    for (int i = 0; i < BIG_N; ++i) {
+        p[i] = float(i); // 完全连续，cacheline 100% 被用上
+    }
+}
+static inline void big_aosoa_assign_single(BigTile* a) {
+    const int tiles = BIG_N / BLOCK;
+    for (int t = 0; t < tiles; ++t) {
+        float* p = a[t].f[0]; // tile 内该字段连续
+        for (int j = 0; j < BLOCK; ++j) {
+            p[j] = float(t * BLOCK + j);
+        }
+    }
+}
+
+// 7) big_assign_few —— 只写 3 个属性 (px, py, pz)，典型"位置更新"负载
+static inline void big_aos_assign_few(BigAoS* a) {
+    for (int i = 0; i < BIG_N; ++i) {
+        a[i].px = float(i);
+        a[i].py = float(i + 1);
+        a[i].pz = float(i + 2);
+    }
+}
+static inline void big_soa_assign_few(BigSoA& a) {
+    float* px = a.f[0];
+    float* py = a.f[1];
+    float* pz = a.f[2];
+    for (int i = 0; i < BIG_N; ++i) {
+        px[i] = float(i);
+        py[i] = float(i + 1);
+        pz[i] = float(i + 2);
+    }
+}
+static inline void big_aosoa_assign_few(BigTile* a) {
+    const int tiles = BIG_N / BLOCK;
+    for (int t = 0; t < tiles; ++t) {
+        float* px = a[t].f[0];
+        float* py = a[t].f[1];
+        float* pz = a[t].f[2];
+        for (int j = 0; j < BLOCK; ++j) {
+            int i = t * BLOCK + j;
+            px[j] = float(i);
+            py[j] = float(i + 1);
+            pz[j] = float(i + 2);
+        }
+    }
+}
+
+// 8) big_assign_all —— 写入全部 24 个字段
+static inline void big_aos_assign_all(BigAoS* a) {
+    auto* base = reinterpret_cast<float*>(a);
+    for (int i = 0; i < BIG_N; ++i) {
+        float* row = base + i * BIG_FIELDS;
+        for (int k = 0; k < BIG_FIELDS; ++k)
+            row[k] = float(i + k);
+    }
+}
+static inline void big_soa_assign_all(BigSoA& a) {
+    // 逐字段整段写：LLC 反而更友好 (一次性流式写，不会反复驱逐)
+    for (int k = 0; k < BIG_FIELDS; ++k) {
+        float* p = a.f[k];
+        for (int i = 0; i < BIG_N; ++i)
+            p[i] = float(i + k);
+    }
+}
+static inline void big_aosoa_assign_all(BigTile* a) {
+    const int tiles = BIG_N / BLOCK;
+    for (int t = 0; t < tiles; ++t) {
+        for (int k = 0; k < BIG_FIELDS; ++k) {
+            for (int j = 0; j < BLOCK; ++j) {
+                a[t].f[k][j] = float(t * BLOCK + j + k);
+            }
+        }
+    }
+}
+
+// 9) big_assign_random —— 随机索引，只写 1 个字段
+//    这是个有趣的对比：AoS 依然浪费 cacheline，但 SoA 的随机访问也一样浪费；
+//    因此两者差距不大，甚至 SoA 不一定占优 —— 验证"随机+小访问量" 并非 SoA 的主场
+static inline void big_aos_assign_random(BigAoS* a) {
+    constexpr uint32_t MASK = uint32_t(BIG_N - 1);
+    for (int i_ = 0; i_ < BIG_N; ++i_) {
+        int i = int((uint32_t(i_) * 10007u) & MASK);
+        a[i].px = float(i);
+    }
+}
+static inline void big_soa_assign_random(BigSoA& a) {
+    constexpr uint32_t MASK = uint32_t(BIG_N - 1);
+    float* p = a.f[0];
+    for (int i_ = 0; i_ < BIG_N; ++i_) {
+        int i = int((uint32_t(i_) * 10007u) & MASK);
+        p[i] = float(i);
+    }
+}
+static inline void big_aosoa_assign_random(BigTile* a) {
+    constexpr uint32_t MASK = uint32_t(BIG_N - 1);
+    for (int i_ = 0; i_ < BIG_N; ++i_) {
+        int i = int((uint32_t(i_) * 10007u) & MASK);
+        int t = i / BLOCK;
+        int j = i % BLOCK;
+        a[t].f[0][j] = float(i);
+    }
+}
+
+
+
+// =============================================================================
 // main
 // =============================================================================
 int main() {
@@ -328,9 +489,23 @@ int main() {
     auto* aosoa = static_cast<ParticleTile*>(
         ALIGNED_ALLOC(64, sizeof(ParticleTile) * (N / BLOCK)));
 
-    if (!aos || !soa.x || !soa.y || !soa.z || !soa.w || !aosoa) {
+    // Big (24 属性) 相关内存
+    auto* big_aos = static_cast<BigAoS*>(
+        ALIGNED_ALLOC(64, sizeof(BigAoS) * BIG_N));
+    BigSoA big_soa;
+    for (int k = 0; k < BIG_FIELDS; ++k) {
+        big_soa.f[k] = static_cast<float*>(ALIGNED_ALLOC(64, sizeof(float) * BIG_N));
+    }
+    auto* big_aosoa = static_cast<BigTile*>(
+        ALIGNED_ALLOC(64, sizeof(BigTile) * (BIG_N / BLOCK)));
+
+    if (!aos || !soa.x || !soa.y || !soa.z || !soa.w || !aosoa
+        || !big_aos || !big_aosoa) {
         cerr << "内存分配失败!" << endl;
         return -1;
+    }
+    for (int k = 0; k < BIG_FIELDS; ++k) {
+        if (!big_soa.f[k]) { cerr << "BigSoA 分配失败!" << endl; return -1; }
     }
 
     // 先 touch 一遍内存，避免首次分页导致的巨大抖动
@@ -342,6 +517,19 @@ int main() {
         for (int j = 0; j < BLOCK; ++j) {
             aosoa[t].x[j] = aosoa[t].y[j] = aosoa[t].z[j] = aosoa[t].w[j] = 0.f;
         }
+    }
+    // touch Big
+    {
+        auto* p = reinterpret_cast<float*>(big_aos);
+        for (int i = 0; i < BIG_N * BIG_FIELDS; ++i) p[i] = 0.f;
+    }
+    for (int k = 0; k < BIG_FIELDS; ++k) {
+        for (int i = 0; i < BIG_N; ++i) big_soa.f[k][i] = 0.f;
+    }
+    for (int t = 0; t < BIG_N / BLOCK; ++t) {
+        for (int k = 0; k < BIG_FIELDS; ++k)
+            for (int j = 0; j < BLOCK; ++j)
+                big_aosoa[t].f[k][j] = 0.f;
     }
 
     // ----- 跑测试 ----------------------------------------------------------
@@ -366,6 +554,32 @@ int main() {
     Stat aa_rand     = bench("assign_all_random",   [&] { aosoa_assign_all_random(aosoa); });
     Stat aa_cmp      = bench("compute_all",         [&] { aosoa_compute_all(aosoa); });
 
+    // ----- Big (24 属性) 极端场景 ------------------------------------------
+    cout << "\n=====================================================" << endl;
+    cout << "  大结构体场景：" << BIG_FIELDS << " 个 float 属性 / "
+         << sizeof(BigAoS) << " B, N=" << BIG_N
+         << " (" << (double(BIG_N) * sizeof(BigAoS) / (1024.0 * 1024.0))
+         << " MB)" << endl;
+    cout << "=====================================================" << endl;
+
+    cout << "\n[Big-AoS]" << endl;
+    Stat b_aos_sin   = bench("assign_single (1/24)",   [&] { big_aos_assign_single(big_aos); });
+    Stat b_aos_few   = bench("assign_few    (3/24)",   [&] { big_aos_assign_few(big_aos); });
+    Stat b_aos_all   = bench("assign_all    (24/24)",  [&] { big_aos_assign_all(big_aos); });
+    Stat b_aos_rnd   = bench("assign_random (1/24)",   [&] { big_aos_assign_random(big_aos); });
+
+    cout << "\n[Big-SoA]" << endl;
+    Stat b_soa_sin   = bench("assign_single (1/24)",   [&] { big_soa_assign_single(big_soa); });
+    Stat b_soa_few   = bench("assign_few    (3/24)",   [&] { big_soa_assign_few(big_soa); });
+    Stat b_soa_all   = bench("assign_all    (24/24)",  [&] { big_soa_assign_all(big_soa); });
+    Stat b_soa_rnd   = bench("assign_random (1/24)",   [&] { big_soa_assign_random(big_soa); });
+
+    cout << "\n[Big-AoSoA  block=" << BLOCK << "]" << endl;
+    Stat b_aa_sin    = bench("assign_single (1/24)",   [&] { big_aosoa_assign_single(big_aosoa); });
+    Stat b_aa_few    = bench("assign_few    (3/24)",   [&] { big_aosoa_assign_few(big_aosoa); });
+    Stat b_aa_all    = bench("assign_all    (24/24)",  [&] { big_aosoa_assign_all(big_aosoa); });
+    Stat b_aa_rnd    = bench("assign_random (1/24)",   [&] { big_aosoa_assign_random(big_aosoa); });
+
     // ----- 汇总表格 --------------------------------------------------------
     cout << "\n=====================================================" << endl;
     cout << "  汇总对比 (取 avg, 单位 ms; 括号内为相对 AoS 的加速比)" << endl;
@@ -383,10 +597,29 @@ int main() {
     print_row("compute_all",         aos_cmp.avg(),   soa_cmp.avg(),   aa_cmp.avg());
     cout << "=====================================================" << endl;
 
+    // ----- Big 结构体汇总表格 ---------------------------------------------
+    cout << "\n=====================================================" << endl;
+    cout << "  大结构体 (24 属性) 汇总对比" << endl;
+    cout << "=====================================================" << endl;
+    cout << "| " << left << setw(26) << "Scenario"
+         << "| " << right << setw(9) << "AoS"
+         << " | " << setw(9) << "SoA" << "        "
+         << " | " << setw(9) << "AoSoA" << "      " << " |" << endl;
+    cout << "|---------------------------"
+         << "|-----------|--------------------|---------------------|" << endl;
+    print_row("big assign_single 1/24", b_aos_sin.avg(), b_soa_sin.avg(), b_aa_sin.avg());
+    print_row("big assign_few    3/24", b_aos_few.avg(), b_soa_few.avg(), b_aa_few.avg());
+    print_row("big assign_all   24/24", b_aos_all.avg(), b_soa_all.avg(), b_aa_all.avg());
+    print_row("big assign_random 1/24", b_aos_rnd.avg(), b_soa_rnd.avg(), b_aa_rnd.avg());
+    cout << "=====================================================" << endl;
+
     cout << "\n观察要点：" << endl;
     cout << "  * assign_single       : SoA 应显著胜出 (cacheline 利用率 100% vs 25%)" << endl;
     cout << "  * assign_all_random   : AoS 应显著胜出 (随机访问 1 条 cacheline vs 4 条)" << endl;
     cout << "  * assign_all/compute  : 三者接近, AoSoA 通常是稳定的中间值" << endl;
+    cout << "  * big assign_single   : SoA 可达 ~10x+ (AoS 浪费 23/24 的 cacheline)" << endl;
+    cout << "  * big assign_all      : 三者接近 (都要把所有字节写一遍)" << endl;
+    cout << "  * big assign_random   : 若只访问 1 个字段, AoS 的 '抢占 cacheline' 优势失效" << endl;
 
     // ----- 清理 ------------------------------------------------------------
     ALIGNED_FREE(aos);
@@ -395,5 +628,8 @@ int main() {
     ALIGNED_FREE(soa.z);
     ALIGNED_FREE(soa.w);
     ALIGNED_FREE(aosoa);
+    ALIGNED_FREE(big_aos);
+    for (int k = 0; k < BIG_FIELDS; ++k) ALIGNED_FREE(big_soa.f[k]);
+    ALIGNED_FREE(big_aosoa);
     return 0;
 }
